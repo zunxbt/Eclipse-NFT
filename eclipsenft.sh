@@ -1,6 +1,7 @@
 #!/bin/bash
 
-set -e
+curl -s https://raw.githubusercontent.com/zunxbt/logo/main/logo.sh | bash
+sleep 3
 
 # Function to display messages
 show() {
