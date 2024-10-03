@@ -1,6 +1,5 @@
-// upload.ts
 
-import {
+  import {
     GenericFile,
     request,
     HttpInterface,
@@ -14,26 +13,34 @@ interface PinataUploadResponse {
     Timestamp: string;
 }
 
-const createPinataFetch = (): HttpInterface => ({
-    send: async <ResponseData, RequestData = unknown>(request: HttpRequest<RequestData>): Promise<HttpResponse<ResponseData>> => {
-        let headers = new Headers(
-            Object.entries(request.headers).map(([name, value]) => [name, value] as [string, string])
-        );
-
-        if (!headers.has('pinata_api_key') || !headers.has('pinata_secret_api_key')) {
-            throw new Error('Missing Pinata API headers');
+// Utility to validate Pinata API headers
+const validatePinataHeaders = (headers: Headers) => {
+    ['pinata_api_key', 'pinata_secret_api_key'].forEach((key) => {
+        if (!headers.has(key)) {
+            throw new Error(`Missing required Pinata API header: ${key}`);
         }
+    });
+};
 
-        const isJsonRequest = headers.get('content-type')?.includes('application/json') ?? false;
-        const body = isJsonRequest && request.data ? JSON.stringify(request.data) : request.data as string | undefined;
+// Creates a custom fetch for Pinata requests
+const createPinataFetch = (): HttpInterface => ({
+    send: async <ResponseData, RequestData = unknown>(
+        req: HttpRequest<RequestData>
+    ): Promise<HttpResponse<ResponseData>> => {
+        const headers = new Headers(req.headers as Record<string, string>);
+        validatePinataHeaders(headers);
+
+        const body = headers.get('content-type')?.includes('application/json') && req.data
+            ? JSON.stringify(req.data)
+            : req.data as string | undefined;
 
         try {
-            const response = await fetch(request.url, {
-                method: request.method,
+            const response = await fetch(req.url, {
+                method: req.method,
                 headers,
                 body,
                 redirect: 'follow',
-                signal: request.signal as AbortSignal,
+                signal: req.signal as AbortSignal,
             });
 
             const bodyText = await response.text();
@@ -50,12 +57,20 @@ const createPinataFetch = (): HttpInterface => ({
             };
         } catch (error) {
             console.error('Fetch request failed:', error);
-            throw error;
+            throw new Error('Request to Pinata failed');
         }
     },
 });
 
-const uploadToIpfs = async <T>(
+// Utility to check if the HTTP response was successful
+const checkResponse = (response: HttpResponse<any>) => {
+    if (!response.ok) {
+        throw new Error(`Error ${response.status}: ${response.statusText}`);
+    }
+};
+
+// Function to upload a file to IPFS via Pinata
+const uploadToIpfs = async (
     file: GenericFile,
     apiKey: string,
     secretKey: string
@@ -64,9 +79,8 @@ const uploadToIpfs = async <T>(
     const endpoint = 'https://api.pinata.cloud/pinning/pinFileToIPFS';
     const formData = new FormData();
 
-    // Handle null values for contentType
-    const fileBlob = new Blob([file.buffer], { type: file.contentType || undefined });
-
+    // Create a Blob for the file, handling content type if provided
+    const fileBlob = new Blob([file.buffer], { type: file.contentType ?? '' });
     formData.append('file', fileBlob, file.fileName);
 
     const pinataRequest = request()
@@ -77,13 +91,12 @@ const uploadToIpfs = async <T>(
 
     try {
         const response = await http.send<PinataUploadResponse, FormData>(pinataRequest);
-        if (!response.ok) throw new Error(`${response.status} - Failed to send request: ${response.statusText}`);
-        return response.data.IpfsHash; // Get the IPFS hash from the response
+        checkResponse(response);
+        return response.data.IpfsHash; // Return the IPFS hash from the response
     } catch (error) {
-        console.error('Failed to send request:', error);
+        console.error('Failed to upload to IPFS:', error);
         throw error;
     }
 };
-
 
 export { uploadToIpfs };
